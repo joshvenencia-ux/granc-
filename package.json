@@ -1,0 +1,25 @@
+{
+    "name": "granc",
+    "private": true,
+    "workspaces": [
+        "apps/*"
+    ],
+    "scripts": {
+        "dev:frontend": "npm run dev -w apps/frontend",
+        "dev:backend": "npm run start:dev -w apps/backend",
+        "build:frontend": "npm run build -w apps/frontend",
+        "build:backend": "npm run build -w apps/backend",
+        "test:frontend": "npm test -w apps/frontend",
+        "test:backend": "npm test -w apps/backend",
+        "lint:frontend": "npm run lint -w apps/frontend",
+        "lint:backend": "npm run lint -w apps/backend"
+    },
+    "dependencies": {
+        "compression": "^1.8.1",
+        "helmet": "^8.1.0"
+    },
+    "devDependencies": {
+        "@types/compression": "^1.8.1",
+        "@types/helmet": "^0.0.48"
+    }
+}

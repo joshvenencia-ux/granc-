@@ -1,0 +1,237 @@
+// Prisma + PostgreSQL (multi-juego, Wallet separada)
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ===================== Enums =====================
+enum JuegoTipo {
+  DRONX       // Crash
+  GRANSPIN    // Nuevo juego de slots
+}
+
+enum RondaEstado {
+  WAIT
+  RUN
+  CRASHED
+  SETTLED
+}
+
+enum ApuestaEstado {
+  PLACED
+  CASHED
+  LOST
+  CANCELLED
+}
+
+enum MovimientoTipo {
+  RECARGA
+  RETIRO
+  APUESTA
+  PREMIO
+  AJUSTE
+  TRANSFERENCIA_IN
+  TRANSFERENCIA_OUT
+}
+
+enum TransferenciaEstado {
+  PENDIENTE
+  COMPLETADA
+  FALLIDA
+}
+
+// ===================== Usuario =====================
+model Usuario {
+  id                 Int       @id @default(autoincrement())
+  firebase_uid       String    @unique
+
+  nombre_completo    String
+  usuario            String    @unique
+  correo             String    @unique
+  contrasena         String    @default("")
+  cedula             String
+
+  rol                String    @default("user")
+  estado_de_cuenta   String    @default("offline")
+
+  fecha_registro       DateTime  @default(now())
+  fecha_ultimo_ingreso DateTime?
+
+  moneda             String?   @default("COP")
+  apellido           String?
+  celular            String?
+  direccion          String?
+  fecha_nacimiento   DateTime?
+  genero             String?
+
+  wallet         Wallet?
+  juegos         Juego[]
+  apuestas       Apuesta[]
+  movimientos    Movimiento[]
+  transferencias Transferencia[]
+
+  @@index([fecha_registro])
+}
+
+// ===================== Wallet =====================
+model Wallet {
+  usuarioId Int     @id
+  usuario   Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+
+  balance   Decimal  @default(0) @db.Decimal(18, 0)
+  version   Int      @default(1)
+  updatedAt DateTime @updatedAt
+}
+
+// ===================== Juego (Ronda genérica) =====================
+model Juego {
+  id             Int         @id @default(autoincrement())
+  tipo_juego     JuegoTipo
+  estado         RondaEstado @default(WAIT)
+  fecha_partida  DateTime    @default(now())
+
+  // Provably-fair
+  serverSeedHash String      @unique
+  serverSeed     String?
+  clientSeed     String?
+  nonce          Int         @default(0)
+  revealedAt     DateTime?
+
+  finalX   Decimal? @db.Decimal(10, 2)
+  targetX  Decimal? @db.Decimal(10, 2)
+
+  usuarioId Int
+  usuario   Usuario  @relation(fields: [usuarioId], references: [id])
+
+  apuestas    Apuesta[]
+  movimientos Movimiento[]
+
+  @@index([tipo_juego, estado, fecha_partida])
+  @@index([usuarioId, fecha_partida])
+}
+
+// ===================== Apuesta (genérica) =====================
+model Apuesta {
+  id        Int        @id @default(autoincrement())
+
+  usuarioId Int
+  usuario   Usuario    @relation(fields: [usuarioId], references: [id])
+
+  juegoId   Int
+  juego     Juego      @relation(fields: [juegoId], references: [id])
+
+  estado    ApuestaEstado @default(PLACED)
+
+  monto     Decimal    @db.Decimal(18, 0)
+  payout    Decimal?   @db.Decimal(18, 0)
+
+  cashoutX   Decimal?  @db.Decimal(8, 2)
+  referencia String?
+  createdAt  DateTime  @default(now())
+  cashedAt   DateTime?
+
+  // Subtipos
+  dronx     DronXApuesta?
+  granSpin  GranSpinApuesta?
+
+  movimientos Movimiento[]
+
+  @@unique([usuarioId, juegoId, referencia], map: "uniq_apuesta_ref_por_usuario_juego")
+  @@index([usuarioId, juegoId])
+  @@index([juegoId, estado])
+  @@index([createdAt])
+}
+
+// ===================== Subtipo: DronX (Crash) =====================
+model DronXApuesta {
+  apuestaId Int
+  apuesta   Apuesta @relation(fields: [apuestaId], references: [id])
+
+  autoCashoutX Decimal? @db.Decimal(8, 2)
+  multiplierX  Decimal? @db.Decimal(8, 2)
+  slot         String?
+
+  @@id([apuestaId])
+  @@index([slot])
+}
+
+// ===================== Subtipo: GranSpin (Slots) =====================
+model GranSpinApuesta {
+  apuestaId     Int
+  apuesta       Apuesta @relation(fields: [apuestaId], references: [id])
+
+  // Información específica del spin
+  reels         Json                 // resultado de los carretes (símbolos alineados)
+  lineas        Int                  // número de líneas apostadas
+  premioBruto   Decimal  @db.Decimal(18, 0) // antes de retenciones
+  multiplicador Decimal  @db.Decimal(8, 2)
+
+  spinId   String   @unique
+  metadata Json?
+
+  @@id([apuestaId])
+  @@index([lineas])
+  @@index([multiplicador])
+}
+
+// ===================== Movimiento (Ledger) =====================
+model Movimiento {
+  id            Int      @id @default(autoincrement())
+
+  usuarioId     Int
+  usuario       Usuario  @relation(fields: [usuarioId], references: [id])
+
+  tipo          MovimientoTipo
+
+  monto         Decimal  @db.Decimal(18, 0)
+  saldoAntes    Decimal  @db.Decimal(18, 0)
+  saldoDespues  Decimal  @db.Decimal(18, 0)
+
+  referencia    String?
+
+  juegoId       Int?
+  juego         Juego?    @relation(fields: [juegoId], references: [id])
+
+  apuestaId     Int?
+  apuesta       Apuesta?  @relation(fields: [apuestaId], references: [id])
+
+  transferenciaId Int?
+  transferencia   Transferencia? @relation(fields: [transferenciaId], references: [id])
+
+  metadata      Json?
+  createdAt     DateTime @default(now())
+
+  @@index([usuarioId, createdAt])
+  @@index([apuestaId])
+  @@index([juegoId])
+  @@index([transferenciaId])
+}
+
+// ===================== Transferencia =====================
+model Transferencia {
+  id          Int      @id @default(autoincrement())
+  usuarioId   Int
+  usuario     Usuario  @relation(fields: [usuarioId], references: [id])
+
+  monto       Decimal  @db.Decimal(18, 0)
+  comision    Decimal  @default(0) @db.Decimal(18, 0)
+
+  estado      TransferenciaEstado @default(PENDIENTE)
+
+  motivo      String?
+  createdAt   DateTime  @default(now())
+  completedAt DateTime?
+  metadata    Json?
+
+  externalRef String?  @unique
+
+  movimientos Movimiento[]
+
+  @@index([estado, createdAt])
+  @@index([usuarioId, createdAt])
+}
